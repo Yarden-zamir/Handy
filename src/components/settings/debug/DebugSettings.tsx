@@ -1,18 +1,8 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { WordCorrectionThreshold } from "./WordCorrectionThreshold";
 import { LogLevelSelector } from "./LogLevelSelector";
 import { LiveLogViewer } from "./LiveLogViewer";
-import { PasteDelay } from "./PasteDelay";
-import { HoldThreshold } from "./HoldThreshold";
-import { ReliablePasteToggle } from "./ReliablePaste";
-import { RecordingBuffer } from "./RecordingBuffer";
-import { LanguageDetectionWindow } from "./LanguageDetectionWindow";
 import { SettingsGroup } from "../../ui/SettingsGroup";
-import { AlwaysOnMicrophone } from "../AlwaysOnMicrophone";
-import { SoundPicker } from "../SoundPicker";
-import { ClamshellMicrophoneSelector } from "../ClamshellMicrophoneSelector";
-import { UpdateChecksToggle } from "../UpdateChecksToggle";
 import { WhatsNewPreview } from "./WhatsNewPreview";
 import { KeyboardDiagnostic } from "./KeyboardDiagnostic";
 import { DebugRun, OnboardingPreview } from "./OnboardingPreview";
@@ -53,26 +43,6 @@ export const DebugSettings: React.FC<DebugSettingsProps> = ({
           descriptionMode="tooltip"
           grouped={true}
         />
-        <UpdateChecksToggle descriptionMode="tooltip" grouped={true} />
-        <SoundPicker
-          label={t("settings.debug.soundTheme.label")}
-          description={t("settings.debug.soundTheme.description")}
-        />
-        <WordCorrectionThreshold descriptionMode="tooltip" grouped={true} />
-        <PasteDelay descriptionMode="tooltip" grouped={true} />
-        <PasteDelay
-          descriptionMode="tooltip"
-          grouped={true}
-          settingKey="paste_delay_after_ms"
-          labelKey="settings.debug.pasteDelayAfter.title"
-          descriptionKey="settings.debug.pasteDelayAfter.description"
-        />
-        <ReliablePasteToggle descriptionMode="tooltip" grouped={true} />
-        <HoldThreshold descriptionMode="tooltip" grouped={true} />
-        <RecordingBuffer descriptionMode="tooltip" grouped={true} />
-        <LanguageDetectionWindow descriptionMode="tooltip" grouped={true} />
-        <AlwaysOnMicrophone descriptionMode="tooltip" grouped={true} />
-        <ClamshellMicrophoneSelector descriptionMode="tooltip" grouped={true} />
         <KeyboardDiagnostic />
         <LiveLogViewer descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>

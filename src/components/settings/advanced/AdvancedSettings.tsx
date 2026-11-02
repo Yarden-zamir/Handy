@@ -26,6 +26,12 @@ import { LazyStreamClose } from "../LazyStreamClose";
 import { AirPodsMode } from "../AirPodsMode";
 import { FillerWordRemoval } from "../FillerWordRemoval";
 import { VadBackendSelector } from "../VadBackendSelector";
+import { UpdateChecksToggle } from "../UpdateChecksToggle";
+import { PasteDelay } from "../PasteDelay";
+import { ReliablePasteToggle } from "../ReliablePaste";
+import { RecordingBuffer } from "../RecordingBuffer";
+import { WordCorrectionThreshold } from "../WordCorrectionThreshold";
+import { LanguageDetectionWindow } from "../LanguageDetectionWindow";
 
 export const AdvancedSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -40,6 +46,7 @@ export const AdvancedSettings: React.FC = () => {
         <ShowTrayIcon descriptionMode="tooltip" grouped={true} />
         <ShowOverlay descriptionMode="tooltip" grouped={true} />
         <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped={true} />
+        <UpdateChecksToggle descriptionMode="tooltip" grouped={true} />
         <ExperimentalToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
@@ -48,6 +55,15 @@ export const AdvancedSettings: React.FC = () => {
         <TypingToolSetting descriptionMode="tooltip" grouped={true} />
         <ClipboardHandlingSetting descriptionMode="tooltip" grouped={true} />
         <AutoSubmit descriptionMode="tooltip" grouped={true} />
+        <PasteDelay descriptionMode="tooltip" grouped={true} />
+        <PasteDelay
+          descriptionMode="tooltip"
+          grouped={true}
+          settingKey="paste_delay_after_ms"
+          labelKey="settings.debug.pasteDelayAfter.title"
+          descriptionKey="settings.debug.pasteDelayAfter.description"
+        />
+        <ReliablePasteToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
@@ -55,6 +71,8 @@ export const AdvancedSettings: React.FC = () => {
         <LongFormChunking descriptionMode="tooltip" grouped={true} />
         <FillerWordRemoval descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
+        <WordCorrectionThreshold descriptionMode="tooltip" grouped={true} />
+        <RecordingBuffer descriptionMode="tooltip" grouped={true} />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
@@ -78,6 +96,7 @@ export const AdvancedSettings: React.FC = () => {
           <AirPodsMode descriptionMode="tooltip" grouped={true} />
           <VadBackendSelector descriptionMode="tooltip" grouped={true} />
           <LanguageDetection descriptionMode="tooltip" grouped={true} />
+          <LanguageDetectionWindow descriptionMode="tooltip" grouped={true} />
         </SettingsGroup>
       )}
     </div>

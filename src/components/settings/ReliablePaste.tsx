@@ -1,8 +1,8 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { ToggleSwitch } from "../../ui/ToggleSwitch";
-import { useSettings } from "../../../hooks/useSettings";
-import { useOsType } from "../../../hooks/useOsType";
+import { ToggleSwitch } from "../ui/ToggleSwitch";
+import { useSettings } from "../../hooks/useSettings";
+import { useOsType } from "../../hooks/useOsType";
 
 interface ReliablePasteToggleProps {
   descriptionMode?: "inline" | "tooltip";

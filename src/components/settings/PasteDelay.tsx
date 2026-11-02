@@ -1,7 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Slider } from "../../ui/Slider";
-import { useSettings } from "../../../hooks/useSettings";
+import { Slider } from "../ui/Slider";
+import { useSettings } from "../../hooks/useSettings";
 
 type PasteDelayKey = "paste_delay_ms" | "paste_delay_after_ms";
 

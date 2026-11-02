@@ -8,6 +8,10 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { OutputDeviceSelector } from "../OutputDeviceSelector";
 import { ShortcutActivationSetting } from "../ShortcutActivation";
 import { AudioFeedback } from "../AudioFeedback";
+import { SoundPicker } from "../SoundPicker";
+import { HoldThreshold } from "../HoldThreshold";
+import { AlwaysOnMicrophone } from "../AlwaysOnMicrophone";
+import { ClamshellMicrophoneSelector } from "../ClamshellMicrophoneSelector";
 import { useSettings } from "../../../hooks/useSettings";
 import { VolumeSlider } from "../VolumeSlider";
 import { MuteWhileRecording } from "../MuteWhileRecording";
@@ -29,6 +33,9 @@ export const GeneralSettings: React.FC = () => {
       <SettingsGroup title={t("settings.general.title")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
         <ShortcutActivationSetting descriptionMode="tooltip" grouped={true} />
+        {getSetting("shortcut_activation") === "hold_or_toggle" && (
+          <HoldThreshold descriptionMode="tooltip" grouped={true} />
+        )}
         {/* Cancel shortcut remains hidden on Linux because of dynamic shortcut instability. */}
         {!isLinux && <ShortcutInput shortcutId="cancel" grouped={true} />}
       </SettingsGroup>
@@ -42,8 +49,16 @@ export const GeneralSettings: React.FC = () => {
       <SettingsGroup title={t("settings.sound.title")}>
         <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
         <ChannelSelector descriptionMode="tooltip" grouped={true} />
+        <ClamshellMicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        <AlwaysOnMicrophone descriptionMode="tooltip" grouped={true} />
         <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
         <AudioFeedback descriptionMode="tooltip" grouped={true} />
+        {audioFeedbackEnabled && (
+          <SoundPicker
+            label={t("settings.debug.soundTheme.label")}
+            description={t("settings.debug.soundTheme.description")}
+          />
+        )}
         <OutputDeviceSelector
           descriptionMode="tooltip"
           grouped={true}
