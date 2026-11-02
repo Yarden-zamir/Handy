@@ -164,6 +164,9 @@ struct InputEvent {
     mode: ShortcutActivation,
     /// Hold-or-toggle: minimum press duration that counts as a hold.
     hold_threshold: Duration,
+    /// Push-to-talk: presses shorter than this record nothing. Zero starts
+    /// recording on key-down.
+    min_hold: Duration,
     /// External triggers (SIGUSR2, CLI flags) rather than physical keys.
     /// They fire on every edge by design and must never be debounced —
     /// dropping one desyncs toggle parity and wedges recording on.
@@ -179,6 +182,24 @@ impl InputEvent {
             ShortcutActivation::PushToTalk | ShortcutActivation::Toggle => Duration::ZERO,
         }
     }
+
+    /// Push-to-talk waits this long before it starts recording, so a quick
+    /// tap does nothing.
+    fn start_delay(&self) -> Duration {
+        match self.mode {
+            ShortcutActivation::PushToTalk if !self.external => self.min_hold,
+            _ => Duration::ZERO,
+        }
+    }
+}
+
+/// A push-to-talk press still inside its start delay. Recording starts at
+/// `deadline` unless the key comes up first.
+struct PendingStart {
+    binding_id: String,
+    hotkey_string: String,
+    pressed_at: Instant,
+    deadline: Instant,
 }
 
 /// A side effect decided by [`CoordinatorState`]; the coordinator thread is
@@ -251,6 +272,7 @@ struct CoordinatorState {
     last_press: Option<Instant>,
     pending_release: Option<PendingRelease>,
     pending_press: Option<PendingPress>,
+    pending_start: Option<PendingStart>,
 }
 
 impl CoordinatorState {
@@ -261,12 +283,49 @@ impl CoordinatorState {
             last_press: None,
             pending_release: None,
             pending_press: None,
+            pending_start: None,
         }
     }
 
-    /// Deadline of the deferred release, if any — drives `recv_timeout`.
-    fn grace_deadline(&self) -> Option<Instant> {
-        self.pending_release.as_ref().map(|p| p.deadline)
+    /// The earliest timer (release grace or push-to-talk start delay), if
+    /// any — drives `recv_timeout`.
+    fn next_deadline(&self) -> Option<Instant> {
+        let grace = self.pending_release.as_ref().map(|p| p.deadline);
+        let start = self.pending_start.as_ref().map(|p| p.deadline);
+        grace.into_iter().chain(start).min()
+    }
+
+    /// Resolve whichever timer elapsed at `now`.
+    fn on_deadline(&mut self, now: Instant) -> Option<Effect> {
+        if self
+            .pending_start
+            .as_ref()
+            .is_some_and(|p| p.deadline <= now)
+        {
+            return self.on_start_delay_elapsed();
+        }
+        if self
+            .pending_release
+            .as_ref()
+            .is_some_and(|p| p.deadline <= now)
+        {
+            return self.on_grace_expired();
+        }
+        None
+    }
+
+    /// The push-to-talk key stayed down for the whole start delay.
+    fn on_start_delay_elapsed(&mut self) -> Option<Effect> {
+        let pending = self.pending_start.take()?;
+        if !matches!(self.stage, Stage::Idle) {
+            return None;
+        }
+        Some(self.begin_recording(
+            pending.binding_id,
+            pending.hotkey_string,
+            pending.pressed_at,
+            false,
+        ))
     }
 
     /// Whether the current session (recording, or remembered for the drain)
@@ -282,6 +341,21 @@ impl CoordinatorState {
     }
 
     fn on_input(&mut self, input: InputEvent, now: Instant) -> Option<Effect> {
+        // A push-to-talk press inside its start delay: its release is a tap and
+        // starts nothing; any other input waits for the delay to resolve.
+        // Limit: an X11 auto-repeat release also cancels it, so a held key there
+        // never starts. Revisit if Linux users need a start delay.
+        if let Some(pending) = &self.pending_start {
+            if !input.is_pressed && pending.binding_id == input.binding_id {
+                debug!(
+                    "Tap for '{}' released inside the start delay: not recording",
+                    input.binding_id
+                );
+                self.pending_start = None;
+            }
+            return None;
+        }
+
         let pending_release_binding = self
             .pending_release
             .as_ref()
@@ -378,6 +452,16 @@ impl CoordinatorState {
         if input.is_pressed {
             match &self.stage {
                 Stage::Idle => {
+                    let delay = input.start_delay();
+                    if !delay.is_zero() {
+                        self.pending_start = Some(PendingStart {
+                            binding_id: input.binding_id,
+                            hotkey_string: input.hotkey_string,
+                            pressed_at: now,
+                            deadline: now + delay,
+                        });
+                        return None;
+                    }
                     // Toggle never ends on a release: locked from the start.
                     let locked = input.mode == ShortcutActivation::Toggle;
                     return Some(self.begin_recording(
@@ -497,6 +581,7 @@ impl CoordinatorState {
         // An explicit cancel abandons any remembered start too — the user
         // asked for silence, not a deferred recording.
         self.pending_press = None;
+        self.pending_start = None;
         // Don't reset during processing — wait for the pipeline to finish.
         if !matches!(self.stage, Stage::Processing)
             && (recording_was_active || matches!(self.stage, Stage::Recording(_)))
@@ -581,12 +666,12 @@ impl TranscriptionCoordinator {
                 let mut state = CoordinatorState::new();
 
                 loop {
-                    let cmd = if let Some(deadline) = state.grace_deadline() {
+                    let cmd = if let Some(deadline) = state.next_deadline() {
                         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                             Ok(cmd) => cmd,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
                                 let was_locked = state.is_recording_locked();
-                                if let Some(effect) = state.on_grace_expired() {
+                                if let Some(effect) = state.on_deadline(Instant::now()) {
                                     run_effect(&app, &mut state, effect);
                                 }
                                 if !was_locked && state.is_recording_locked() {
@@ -642,7 +727,8 @@ impl TranscriptionCoordinator {
     }
 
     /// Send a keyboard input event for a transcribe binding. `hold_threshold`
-    /// only matters for [`ShortcutActivation::HoldOrToggle`].
+    /// only matters for [`ShortcutActivation::HoldOrToggle`] and `min_hold`
+    /// only for [`ShortcutActivation::PushToTalk`].
     pub fn send_input(
         &self,
         binding_id: &str,
@@ -650,6 +736,7 @@ impl TranscriptionCoordinator {
         is_pressed: bool,
         mode: ShortcutActivation,
         hold_threshold: Duration,
+        min_hold: Duration,
     ) {
         self.send(
             binding_id,
@@ -657,6 +744,7 @@ impl TranscriptionCoordinator {
             is_pressed,
             mode,
             hold_threshold,
+            min_hold,
             false,
         );
     }
@@ -670,6 +758,7 @@ impl TranscriptionCoordinator {
             true,
             ShortcutActivation::Toggle,
             Duration::ZERO,
+            Duration::ZERO,
             true,
         );
     }
@@ -681,6 +770,7 @@ impl TranscriptionCoordinator {
         is_pressed: bool,
         mode: ShortcutActivation,
         hold_threshold: Duration,
+        min_hold: Duration,
         external: bool,
     ) {
         if self
@@ -691,6 +781,7 @@ impl TranscriptionCoordinator {
                 is_pressed,
                 mode,
                 hold_threshold,
+                min_hold,
                 external,
             }))
             .is_err()
@@ -950,6 +1041,7 @@ mod tests {
             hotkey_string: BINDING.to_string(),
             is_pressed,
             mode: ShortcutActivation::PushToTalk,
+            min_hold: Duration::ZERO,
             hold_threshold: Duration::ZERO,
             external: false,
         }
@@ -1088,6 +1180,7 @@ mod tests {
                     hotkey_string: BINDING.to_string(),
                     is_pressed: true,
                     mode: ShortcutActivation::Toggle,
+                    min_hold: Duration::ZERO,
                     hold_threshold: Duration::ZERO,
                     external: true,
                 },
@@ -1150,6 +1243,7 @@ mod tests {
             hotkey_string: binding_id.to_string(),
             is_pressed: true,
             mode: ShortcutActivation::Toggle,
+            min_hold: Duration::ZERO,
             hold_threshold: Duration::ZERO,
             external,
         }
@@ -1275,6 +1369,7 @@ mod tests {
             hotkey_string: BINDING.to_string(),
             is_pressed,
             mode,
+            min_hold: Duration::ZERO,
             hold_threshold: HOLD_THRESHOLD,
             external: false,
         }
@@ -1351,7 +1446,7 @@ mod tests {
 
         assert!(state.on_input(input(mode, false), t0 + ms(900)).is_none());
         assert!(
-            state.grace_deadline().is_none(),
+            state.next_deadline().is_none(),
             "no release may be deferred once locked"
         );
         assert_eq!(state.stage, Stage::Recording(BINDING.to_string()));
@@ -1392,7 +1487,7 @@ mod tests {
             clock += ms(5);
             assert!(state.on_input(input(mode, true), clock).is_none());
             assert!(
-                state.grace_deadline().is_none(),
+                state.next_deadline().is_none(),
                 "auto-repeat press must cancel the deferred release"
             );
         }
@@ -1452,7 +1547,7 @@ mod tests {
         assert!(state.is_locked());
         assert!(state.on_input(input(mode, false), t0 + ms(100)).is_none());
         assert!(
-            state.grace_deadline().is_none(),
+            state.next_deadline().is_none(),
             "toggle never defers releases"
         );
         assert!(state.on_input(input(mode, false), t0 + ms(3000)).is_none());
@@ -1460,6 +1555,13 @@ mod tests {
             state.on_input(input(mode, true), t0 + ms(4000)),
             Some(Effect::Stop { .. })
         ));
+    }
+
+    fn ptt_min_hold_input(is_pressed: bool) -> InputEvent {
+        InputEvent {
+            min_hold: HOLD_THRESHOLD,
+            ..input(ShortcutActivation::PushToTalk, is_pressed)
+        }
     }
 
     /// Push-to-talk: even a very short press stops on release — there is no
@@ -1479,6 +1581,56 @@ mod tests {
             state.on_grace_expired(),
             Some(Effect::Stop { .. })
         ));
+    }
+
+    /// Push-to-talk: a tap released inside the minimum hold never records.
+    #[test]
+    fn push_to_talk_tap_shorter_than_min_hold_records_nothing() {
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        assert!(state.on_input(ptt_min_hold_input(true), t0).is_none());
+        assert_eq!(state.next_deadline(), Some(t0 + HOLD_THRESHOLD));
+        assert!(state
+            .on_input(ptt_min_hold_input(false), t0 + ms(120))
+            .is_none());
+        assert_eq!(state.next_deadline(), None);
+        assert!(state.on_deadline(t0 + ms(400)).is_none());
+        assert_eq!(state.stage, Stage::Idle);
+    }
+
+    /// Push-to-talk: a key held past the minimum hold starts recording then,
+    /// and even a release just after the start stops it — no tap-to-lock.
+    #[test]
+    fn push_to_talk_hold_past_min_hold_records_until_release() {
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        assert!(state.on_input(ptt_min_hold_input(true), t0).is_none());
+        assert!(state.on_deadline(t0 + ms(299)).is_none());
+        assert!(matches!(
+            state.on_deadline(t0 + HOLD_THRESHOLD),
+            Some(Effect::Start { .. })
+        ));
+        assert!(state
+            .on_input(ptt_min_hold_input(false), t0 + ms(340))
+            .is_none());
+        assert!(matches!(
+            state.on_deadline(t0 + ms(340) + RELEASE_GRACE),
+            Some(Effect::Stop { .. })
+        ));
+    }
+
+    /// Cancel inside the minimum hold drops the pending start.
+    #[test]
+    fn push_to_talk_cancel_inside_min_hold_drops_start() {
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        state.on_input(ptt_min_hold_input(true), t0);
+        state.on_cancel(false);
+        assert!(state.on_deadline(t0 + HOLD_THRESHOLD).is_none());
+        assert_eq!(state.stage, Stage::Idle);
     }
 
     /// Cancel (Escape) during a locked hold-or-toggle session resets cleanly so
@@ -1588,7 +1740,7 @@ mod tests {
             "the second tap's press forgets the queued tap"
         );
         assert!(state.on_input(input(mode, false), t0 + ms(1600)).is_none());
-        assert!(state.grace_deadline().is_none());
+        assert!(state.next_deadline().is_none());
 
         assert!(state.on_processing_finished().is_none());
         assert_eq!(state.stage, Stage::Idle);
@@ -1646,7 +1798,7 @@ mod tests {
             assert!(state.on_input(input(mode, false), clock).is_none());
             clock += ms(5);
             assert!(state.on_input(input(mode, true), clock).is_none());
-            assert!(state.grace_deadline().is_none());
+            assert!(state.next_deadline().is_none());
         }
 
         // Drain at ~t0 + 1300ms with the key still down.

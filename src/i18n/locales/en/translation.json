@@ -386,6 +386,11 @@
           "push_to_talk": "Records while you hold the shortcut",
           "toggle": "Tap the shortcut to start recording, tap again to stop"
         }
+      },
+      "pushToTalkMinHold": {
+        "title": "Ignore Short Presses",
+        "description": "Presses shorter than this record nothing, so a quick tap of the shortcut does not start a recording. Off starts recording as soon as you press.",
+        "off": "Off"
       }
     },
     "models": {
