@@ -25,6 +25,37 @@ fn custom_sound_exists(app: &AppHandle, sound_type: &str) -> bool {
         .is_ok_and(|path| path.exists())
 }
 
+#[derive(Deserialize, Type, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomSoundSlot {
+    Start,
+    Stop,
+}
+
+/// Copies a user-chosen audio file into the custom sound slot. The file keeps
+/// the `.wav` name for every format because playback probes the content.
+#[tauri::command]
+#[specta::specta]
+pub fn set_custom_sound(
+    app: AppHandle,
+    slot: CustomSoundSlot,
+    source_path: String,
+) -> Result<(), String> {
+    let file = std::fs::File::open(&source_path)
+        .map_err(|e| format!("Cannot open '{source_path}': {e}"))?;
+    rodio::Decoder::new(std::io::BufReader::new(file))
+        .map_err(|e| format!("'{source_path}' is not a supported audio file: {e}"))?;
+    let name = match slot {
+        CustomSoundSlot::Start => "start",
+        CustomSoundSlot::Stop => "stop",
+    };
+    let target = crate::portable::resolve_app_data(&app, &format!("custom_{name}.wav"))
+        .map_err(|e| e.to_string())?;
+    std::fs::copy(&source_path, &target)
+        .map_err(|e| format!("Cannot copy to '{}': {e}", target.display()))?;
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn check_custom_sounds(app: AppHandle) -> CustomSounds {
