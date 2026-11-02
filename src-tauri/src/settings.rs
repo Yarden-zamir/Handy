@@ -133,6 +133,21 @@ pub enum OverlayPosition {
     Bottom,
 }
 
+/// A custom overlay spot as fractions (0..=1) of the monitor, so it carries
+/// across monitors and resolutions. `x` is the overlay's horizontal center;
+/// `y` is its screen-edge side: the bottom edge for `Bottom`, the top for `Top`.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Type)]
+pub struct OverlayAnchor {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl OverlayAnchor {
+    pub fn is_valid(&self) -> bool {
+        (0.0..=1.0).contains(&self.x) && (0.0..=1.0).contains(&self.y)
+    }
+}
+
 /// Which recording overlay to display. `Minimal` and `Live` share one base
 /// (the pill); `Live` grows into the panel that shows live transcription text.
 /// `None` hides the overlay entirely. Decoupled from whether the model runs in
@@ -458,6 +473,10 @@ pub struct AppSettings {
     pub spoken_languages: Vec<String>,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: OverlayPosition,
+    /// Custom overlay spot from dragging or the sliders. `None` uses the
+    /// default centered spot for `overlay_position`.
+    #[serde(default)]
+    pub overlay_anchor: Option<OverlayAnchor>,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
@@ -1023,6 +1042,7 @@ pub fn get_default_settings() -> AppSettings {
         translate_to_english: false,
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
+        overlay_anchor: None,
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),

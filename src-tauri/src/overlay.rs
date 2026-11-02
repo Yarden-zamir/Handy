@@ -1,7 +1,7 @@
 use crate::input;
 use crate::notices::Notice;
 use crate::settings;
-use crate::settings::{OverlayPosition, OverlayStyle};
+use crate::settings::{OverlayAnchor, OverlayPosition, OverlayStyle};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
@@ -277,6 +277,15 @@ fn calculate_overlay_position(
     let monitor_width = monitor.size().width as f64 / scale;
 
     let settings = settings::get_settings(app_handle);
+    if let Some(anchor) = settings.overlay_anchor {
+        let monitor_height = monitor.size().height as f64 / scale;
+        return Some(anchored_origin(
+            anchor,
+            settings.overlay_position,
+            (monitor_x, monitor_y, monitor_width, monitor_height),
+            (width, height),
+        ));
+    }
 
     let x = monitor_x + (monitor_width - width) / 2.0;
     let y = match settings.overlay_position {
@@ -297,6 +306,66 @@ fn calculate_overlay_position(
     };
 
     Some((x, y))
+}
+
+/// Window origin for a custom anchor, kept fully on the monitor. Works in any
+/// unit as long as `monitor` and `size` share it.
+fn anchored_origin(
+    anchor: OverlayAnchor,
+    position: OverlayPosition,
+    monitor: (f64, f64, f64, f64),
+    size: (f64, f64),
+) -> (f64, f64) {
+    let (mx, my, mw, mh) = monitor;
+    let (w, h) = size;
+    let x = mx + anchor.x * mw - w / 2.0;
+    let edge = my + anchor.y * mh;
+    let y = match position {
+        OverlayPosition::Top => edge,
+        OverlayPosition::Bottom => edge - h,
+    };
+    (
+        x.clamp(mx, (mx + mw - w).max(mx)),
+        y.clamp(my, (my + mh - h).max(my)),
+    )
+}
+
+/// The inverse of [`anchored_origin`]: the anchor for a window rectangle.
+fn anchor_from_origin(
+    position: OverlayPosition,
+    monitor: (f64, f64, f64, f64),
+    origin: (f64, f64),
+    size: (f64, f64),
+) -> OverlayAnchor {
+    let (mx, my, mw, mh) = monitor;
+    let edge = match position {
+        OverlayPosition::Top => origin.1,
+        OverlayPosition::Bottom => origin.1 + size.1,
+    };
+    OverlayAnchor {
+        x: ((origin.0 + size.0 / 2.0 - mx) / mw).clamp(0.0, 1.0),
+        y: ((edge - my) / mh).clamp(0.0, 1.0),
+    }
+}
+
+/// The anchor for where the overlay window is now, for saving a drag.
+pub fn current_overlay_anchor(app_handle: &AppHandle) -> Option<OverlayAnchor> {
+    let window = app_handle.get_webview_window("recording_overlay")?;
+    let monitor = window.current_monitor().ok()??;
+    let origin = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    let rect = (
+        monitor.position().x as f64,
+        monitor.position().y as f64,
+        monitor.size().width as f64,
+        monitor.size().height as f64,
+    );
+    Some(anchor_from_origin(
+        settings::get_settings(app_handle).overlay_position,
+        rect,
+        (origin.x as f64, origin.y as f64),
+        (size.width as f64, size.height as f64),
+    ))
 }
 
 /// Current overlay window size in logical units (points), for repositioning
@@ -334,12 +403,27 @@ fn windows_overlay_bounds(
     logical_width: f64,
     logical_height: f64,
     overlay_position: OverlayPosition,
+    overlay_anchor: Option<OverlayAnchor>,
 ) -> (i32, i32, i32, i32) {
     // Grow the window with the text scale; offsets stay DPI-only since the
     // card sits flush against the window's screen-edge side.
     let content_scale = scale * text_scale;
     let width = (logical_width * content_scale).round().max(1.0) as i32;
     let height = (logical_height * content_scale).round().max(1.0) as i32;
+    if let Some(anchor) = overlay_anchor {
+        let (x, y) = anchored_origin(
+            anchor,
+            overlay_position,
+            (
+                monitor_position.x as f64,
+                monitor_position.y as f64,
+                monitor_size.width as f64,
+                monitor_size.height as f64,
+            ),
+            (width as f64, height as f64),
+        );
+        return (x.round() as i32, y.round() as i32, width, height);
+    }
     let x = (monitor_position.x as f64 + (monitor_size.width as f64 - width as f64) / 2.0).round()
         as i32;
     let y = match overlay_position {
@@ -369,6 +453,7 @@ fn place_windows_overlay(
     let monitor = get_monitor_with_cursor(app_handle)
         .ok_or_else(|| "failed to determine the monitor containing the cursor".to_string())?;
     let text_scale = windows_text_scale_factor();
+    let settings = settings::get_settings(app_handle);
     let (x, y, width, height) = windows_overlay_bounds(
         *monitor.position(),
         *monitor.size(),
@@ -376,7 +461,8 @@ fn place_windows_overlay(
         text_scale,
         logical_width,
         logical_height,
-        settings::get_settings(app_handle).overlay_position,
+        settings.overlay_position,
+        settings.overlay_anchor,
     );
     let hwnd = overlay_window
         .hwnd()
@@ -870,6 +956,24 @@ mod tests {
         assert!(!is_mouse_within_monitor((-1, 1240), &position, &size));
     }
 
+    #[test]
+    fn overlay_anchor_round_trips_and_stays_on_monitor() {
+        let monitor = (-1920.0, 100.0, 1920.0, 1080.0);
+        let size = (256.0, 50.0);
+        for position in [OverlayPosition::Top, OverlayPosition::Bottom] {
+            let anchor = OverlayAnchor { x: 0.25, y: 0.6 };
+            let origin = anchored_origin(anchor, position, monitor, size);
+            assert_eq!(anchor_from_origin(position, monitor, origin, size), anchor);
+        }
+
+        // An anchor at the far corner keeps the whole window on the monitor.
+        let corner = OverlayAnchor { x: 1.0, y: 1.0 };
+        assert_eq!(
+            anchored_origin(corner, OverlayPosition::Top, monitor, size),
+            (-256.0, 1130.0)
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_cursor_hit_test_does_not_scale_physical_monitor_bounds() {
@@ -912,6 +1016,7 @@ mod tests {
                 OVERLAY_WIDTH,
                 OVERLAY_HEIGHT,
                 OverlayPosition::Bottom,
+                None,
             ),
             (3641, 2025, 399, 75)
         );
@@ -924,6 +1029,7 @@ mod tests {
                 OVERLAY_WIDTH,
                 OVERLAY_HEIGHT,
                 OverlayPosition::Top,
+                None,
             ),
             (3641, 6, 399, 75)
         );
@@ -941,6 +1047,7 @@ mod tests {
                 OVERLAY_STREAM_WIDTH,
                 OVERLAY_STREAM_HEIGHT,
                 OverlayPosition::Bottom,
+                None,
             ),
             (-1530, 1040, 500, 150)
         );

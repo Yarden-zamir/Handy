@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
@@ -90,6 +91,33 @@ const RecordingOverlay: React.FC = () => {
   // until they scroll back down.
   const capRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  // Set while the user drags the pill, so only their moves get saved and not
+  // the backend's own repositioning on show.
+  const draggingRef = useRef(false);
+
+  const startDrag = (event: React.PointerEvent) => {
+    if (event.button !== 0 || (event.target as Element).closest("button")) {
+      return;
+    }
+    draggingRef.current = true;
+    void getCurrentWindow().startDragging();
+  };
+
+  useEffect(() => {
+    let saveTimer: ReturnType<typeof setTimeout> | undefined;
+    const unlisten = getCurrentWindow().onMoved(() => {
+      if (!draggingRef.current) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        draggingRef.current = false;
+        void commands.saveOverlayAnchorFromWindow();
+      }, 300);
+    });
+    return () => {
+      clearTimeout(saveTimer);
+      void unlisten.then((stop) => stop());
+    };
+  }, []);
   const direction = getLanguageDirection(i18n.language);
 
   useEffect(() => {
@@ -138,6 +166,7 @@ const RecordingOverlay: React.FC = () => {
       });
 
       const unlistenHide = await listen("hide-overlay", () => {
+        draggingRef.current = false;
         setIsVisible(false);
         setCaptureReady(false);
         // A notice keeps rendering while it fades. Dropping the transcript here
@@ -381,6 +410,7 @@ const RecordingOverlay: React.FC = () => {
         {noticeProbe}
         <div
           key={session}
+          onPointerDown={startDrag}
           className={`scard ${open ? "open" : ""} ${collapsed ? "working" : ""} ${
             isVisible ? "" : "leaving"
           } ${noticeClass}`}
@@ -443,6 +473,8 @@ const RecordingOverlay: React.FC = () => {
     >
       {noticeProbe}
       <div
+        // A shown notice is dismissed by a click, so it does not drag.
+        onPointerDown={shownNotice ? undefined : startDrag}
         className={`scard compact ${working && isVisible ? "cworking" : ""} ${noticeClass}`}
         style={shownNotice ? { width: noticeWidth } : undefined}
         onClick={dismissNotice}

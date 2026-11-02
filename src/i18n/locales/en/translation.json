@@ -520,6 +520,17 @@
             "bottom": "Bottom",
             "top": "Top"
           }
+        },
+        "placement": {
+          "title": "Custom Position",
+          "description": "Drag the overlay to move it. Click Move to show it without recording. Reset returns it to the default spot.",
+          "move": "Move",
+          "done": "Done",
+          "reset": "Reset",
+          "horizontal": "Horizontal Position",
+          "horizontalHint": "Where the overlay sits from the left (0%) to the right (100%) of the screen",
+          "vertical": "Vertical Position",
+          "verticalHint": "Where the overlay sits from the top (0%) to the bottom (100%) of the screen"
         }
       },
       "pasteMethod": {

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
+import { OverlayPlacement } from "./OverlayPlacement";
 import type { OverlayPosition, OverlayStyle } from "@/bindings";
 
 interface ShowOverlayProps {
@@ -13,7 +14,8 @@ interface ShowOverlayProps {
 export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
-    const { getSetting, updateSetting, isUpdating } = useSettings();
+    const { getSetting, updateSetting, isUpdating, refreshSettings } =
+      useSettings();
 
     const styleOptions = [
       {
@@ -76,12 +78,23 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
             <Dropdown
               options={positionOptions}
               selectedValue={selectedPosition}
-              onSelect={(value) =>
-                updateSetting("overlay_position", value as OverlayPosition)
-              }
+              onSelect={async (value) => {
+                await updateSetting(
+                  "overlay_position",
+                  value as OverlayPosition,
+                );
+                // The backend drops the custom spot when Top or Bottom is picked.
+                await refreshSettings();
+              }}
               disabled={isUpdating("overlay_position")}
             />
           </SettingContainer>
+        )}
+        {selectedStyle !== "none" && (
+          <OverlayPlacement
+            descriptionMode={descriptionMode}
+            grouped={grouped}
+          />
         )}
       </>
     );

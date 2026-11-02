@@ -95,6 +95,12 @@ const settingUpdaters: {
   audio_feedback_volume: (value) =>
     commands.changeAudioFeedbackVolumeSetting(value as number),
   sound_theme: (value) => commands.changeSoundThemeSetting(value as string),
+  overlay_anchor: async (value) => {
+    const result = await commands.changeOverlayAnchorSetting(value ?? null);
+    if (result.status === "error") {
+      throw new Error(result.error);
+    }
+  },
   start_hidden: (value) => commands.changeStartHiddenSetting(value as boolean),
   autostart_enabled: (value) =>
     commands.changeAutostartSetting(value as boolean),

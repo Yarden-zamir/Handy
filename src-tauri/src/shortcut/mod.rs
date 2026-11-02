@@ -733,6 +733,8 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
         }
     };
     settings.overlay_position = parsed;
+    // Picking Top or Bottom means the default spot, so drop a custom one.
+    settings.overlay_anchor = None;
     settings::write_settings(&app, settings);
 
     // Whether the overlay shows at all is owned by overlay_style now; position
@@ -740,6 +742,53 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
     // Update overlay position without recreating window
     crate::utils::update_overlay_position(&app);
 
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_overlay_anchor_setting(
+    app: AppHandle,
+    anchor: Option<crate::settings::OverlayAnchor>,
+) -> Result<(), String> {
+    if anchor.is_some_and(|a| !a.is_valid()) {
+        return Err(format!(
+            "Overlay anchor must be within 0..=1, got {anchor:?}"
+        ));
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.overlay_anchor = anchor;
+    settings::write_settings(&app, settings);
+    crate::utils::update_overlay_position(&app);
+    Ok(())
+}
+
+/// Saves where the user dragged the overlay to.
+#[tauri::command]
+#[specta::specta]
+pub fn save_overlay_anchor_from_window(app: AppHandle) -> Result<(), String> {
+    let anchor = crate::utils::current_overlay_anchor(&app)
+        .ok_or("Cannot read the overlay window position")?;
+    let mut settings = settings::get_settings(&app);
+    settings.overlay_anchor = Some(anchor);
+    settings::write_settings(&app, settings);
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({ "setting": "overlay_anchor" }),
+    );
+    Ok(())
+}
+
+/// Shows the overlay without recording so the user can drag it into place.
+#[tauri::command]
+#[specta::specta]
+pub fn set_overlay_positioning(app: AppHandle, active: bool) -> Result<(), String> {
+    if active {
+        crate::utils::show_recording_overlay(&app);
+    } else {
+        crate::utils::hide_recording_overlay(&app);
+    }
+    let _ = app.emit("overlay-positioning", active);
     Ok(())
 }
 
